@@ -16,31 +16,30 @@ Safe, reproducible workflow and automated toolset for macOS deep storage analysi
 
 ## 🛡️ Mandatory Safety & Risk Disclosure Protocol
 
-To guarantee zero accidental data loss or system instability, this skill adheres to a strict protocol:
+To maximize macOS storage reclamation while guaranteeing 100% stability of the operating system and active applications, this skill enforces a strict 4-layer protocol:
 
-1. **Mandatory Pre-Flight Risk & Data Disclosure**:
-   Before proposing or executing any cleanup, the agent **MUST**:
-   - Present an itemized ASCII tree / categorized list with paths and sizes.
-   - Explicitly detail the **Impact & Risk** of each cleanup target (e.g., whether historical local chat data is removed, whether caches will auto-regenerate, or whether settings reset).
-   - Require explicit user confirmation (`[y/N]`) before proceeding.
+### 1. Four-Tier Risk Classification
+Before requesting deletion confirmation, every candidate path **MUST** be classified and disclosed with its risk level:
+- **🟢 Zero Risk**: Rebuildable developer caches (npm, uv, brew bottles), auto-update staging clones (`code_sign_clone`), unmounted/mounted update DMGs in `/var/folders/`, dead privileged helpers, and empty directories.
+- **🟡 Low Risk**: Application configurations, databases, and sandboxes of apps confirmed uninstalled from `/Applications`. Impact: Resets user preferences if the app is ever reinstalled.
+- **🟠 Medium Risk**: Historical local offline chats or tool caches (e.g. `~/.wxwork_local`). Impact: Permanently deletes offline media; user must ensure data is backed up on phone or cloud.
+- **🔴 System Protected (Immune)**: Untouchable directories (see Hard Protected Whitelist below).
 
-2. **Zero Silent Deletion (Default Read-Only)**:
-   - All tools run in scan/preview mode by default.
-   - Deletion commands require interactive prompt `[y/N]` or explicit `-y` / `--confirm`.
-   - Running in non-interactive mode without `--confirm` aborts automatically with zero files touched.
+### 2. Mandatory Pre-Flight Risk & Data Disclosure
+The agent **MUST** present an itemized ASCII tree / categorized list with paths, sizes, and risk levels before suggesting or executing any deletion.
 
-3. **Safe Trash Policy (Put-Back Enabled)**:
-   - `scan-app-leftovers.py` moves user-space files to macOS Trash (`~/.Trash/`) by default instead of permanent `rm -rf`.
-   - Any accidentally moved item can be restored instantly via Finder ("Put Back").
+### 3. Safe Trash Policy (Put-Back Enabled)
+- `scan-app-leftovers.py` moves user-space files to macOS Trash (`~/.Trash/`) by default instead of permanent `rm -rf`.
+- Any accidentally moved item can be restored instantly via Finder ("Put Back").
 
-4. **Hard Protected Whitelist**:
-   - The following paths are strictly immune to scanning and cleanup:
-     - User personal folders: `~/Documents`, `~/Desktop`, `~/Downloads`, `~/Pictures`, `~/Movies`, `~/Music`
-     - System keychains and identity stores: `~/Library/Keychains`
-     - System data: `~/Library/Mail`, `~/Library/Messages`, `~/Library/Photos`, `~/Library/Safari`
-     - Cloud storage: `~/Library/CloudStorage`, `~/Library/Mobile Documents`
-     - System roots: `/System`, `/usr`, `/bin`, `/sbin`, `/var`, `/private`
-     - Protected ecosystem services: Windows App / Remote Desktop (`UBF8T346G9.com.microsoft.rdc`), To Do (`UBF8T346G9.com.microsoft.to-do-mac`), OneDrive
+### 4. Hard Protected Whitelist
+The following paths are strictly immune to scanning and cleanup:
+- **Personal Directories**: `~/Documents`, `~/Desktop`, `~/Downloads`, `~/Pictures`, `~/Movies`, `~/Music`
+- **Identity & Credentials**: `~/Library/Keychains`
+- **Native Communication / System Data**: `Mail`, `Messages`, `Photos`, `Safari`
+- **Cloud Drives**: `~/Library/CloudStorage`, `~/Library/Mobile Documents` (iCloud)
+- **Active Shared Services**: Windows App / Remote Desktop (`UBF8T346G9.com.microsoft.rdc`), Microsoft To Do, Paragon NTFS, etc.
+- **System Roots**: `/System`, `/usr`, `/bin`, `/sbin`, `/var`, `/private`
 
 ---
 
@@ -49,6 +48,9 @@ To guarantee zero accidental data loss or system instability, this skill adheres
 ```text
 mac-deep-clean-skill/
 ├── SKILL.md                          # Workflow rules, safety policies & triage
+├── README.md                         # Documentation & CLI usage
+├── LICENSE                           # MIT License
+├── .gitignore
 └── scripts/
     ├── analyze-disk.sh               # Storage, caches, Spotlight, cloud & startup inspector (Read-only)
     ├── clean-dev-caches.sh           # Developer cache reclaimer (Dry-run & confirmation guarded)
@@ -73,8 +75,8 @@ mo clean --dry-run
 ```
 
 ### Phase 2: Tree Review & Risk Disclosure
-Present discovered cleanable items in a categorized tree. For developer caches, note:
-- *Impact & Risk*: Fully safe; files will automatically re-download or re-compile on next build.
+Present discovered cleanable items in a categorized tree with 🟢 Zero Risk notes.
+- *Impact*: Files will automatically re-download or re-compile on next build.
 
 ### Phase 3: Safe Cleanup Execution
 ```bash
@@ -92,7 +94,7 @@ bash "<skill-dir>/scripts/clean-dev-caches.sh" --confirm
 
 ## Workflow 2: Orphaned App Leftovers & Home Dotfiles Safe Cleaner
 
-Scans for remnants left behind when apps were deleted by dragging to Trash, plus orphaned home dotfiles.
+Scans for remnants left behind when apps were deleted by dragging to Trash, plus orphaned home dotfiles and nested `.app` helpers.
 
 ### Target Locations
 - `~/Library/Application Support/` & `/Library/Application Support/`
@@ -100,8 +102,8 @@ Scans for remnants left behind when apps were deleted by dragging to Trash, plus
 - `~/Library/Saved Application State/`
 - `~/Library/LaunchAgents/` & `/Library/LaunchDaemons/`
 - `/Library/PrivilegedHelperTools/`
-- Hidden nested `.app` bundles (updaters, helper daemons)
-- `/private/var/folders/` orphaned update staging & zombie mounted DMGs
+- Deep nested `.app` bundles (e.g. Logitech, Curse/Twitch, EdgeUpdater, Karabiner)
+- `/private/var/folders/` orphaned update staging & mounted DMGs
 - Kernel & DriverKit ghost extensions (`systemextensionsctl`)
 - Orphaned dotfiles: `~/.wxwork_local` (WeWork chat data), `~/.omp/puppeteer`, `~/.pyenv/versions/2.7*`
 
@@ -120,14 +122,11 @@ Scans for remnants left behind when apps were deleted by dragging to Trash, plus
    python3 "<skill-dir>/scripts/scan-app-leftovers.py" --clean-user --confirm
    ```
 
-3. **Clean system-level remnants (Root Mode with Sudo)**:
+3. **Clean confirmed system-level remnants (Root Mode with Sudo)**:
    ```bash
-   # Cleans confirmed root /Library leftovers and unmounts zombie var/folder DMGs:
+   # Cleans confirmed root /Library leftovers and garbage-collects ghost extensions:
    sudo python3 "<skill-dir>/scripts/scan-app-leftovers.py" --clean-system --confirm
    ```
-
-3. **System-level remnants (Daemons & Helper Tools)**:
-   Root-level files under `/Library/LaunchDaemons` and `/Library/PrivilegedHelperTools` are NEVER deleted automatically. The script outputs the exact `sudo rm -rf ...` line for user inspection and manual execution.
 
 ---
 
@@ -138,7 +137,7 @@ Over time, macOS CoreSpotlight accumulates fragmented journals and deleted file 
 - **Risk Disclosure**: Re-indexing consumes moderate `mdworker` CPU for 10-30 minutes after initiation. Spotlight searches may be temporarily incomplete during the re-index.
 - **Action**:
   ```bash
-  sudo mdutil -E /
+  sudo mdutil -E /System/Volumes/Data
   ```
 
 ---
