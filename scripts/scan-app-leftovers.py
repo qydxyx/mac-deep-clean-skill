@@ -2,19 +2,18 @@
 """
 scan-app-leftovers.py - Orphaned Application Leftover Scanner & Safe Cleaner for macOS
 Detects directories and files left behind by uninstalled applications across:
-- ~/Library/Application Support
-- /Library/Application Support
-- ~/Library/Containers
-- ~/Library/Group Containers
+- ~/Library/Application Support & /Library/Application Support
+- ~/Library/Containers & ~/Library/Group Containers
 - ~/Library/Saved Application State
 - ~/Library/LaunchAgents & /Library/LaunchDaemons
 - /Library/PrivilegedHelperTools
-- ~/Library/Preferences
+- Orphaned home dotfiles (~/.wxwork_local, ~/.omp/puppeteer, obsolete pyenv runtimes)
 
-Safety Guarantee:
+Safety Protocol:
 - Default action is ALWAYS read-only scanning (dry-run).
-- Protected paths whitelist prevents touching critical user documents, cloud drives, or system components.
-- Cleanup moves user-space files to macOS Trash (~/.Trash/) rather than irreversible rm -rf, allowing full recovery.
+- Explicit pre-flight risk & impact disclosure before any deletion.
+- Protected paths whitelist prevents touching personal documents, cloud drives, or system roots.
+- Cleanup moves user-space files to macOS Trash (~/.Trash/) rather than permanent rm -rf.
 - Destructive cleanup requires explicit interactive [y/N] or --confirm flag.
 """
 
@@ -28,7 +27,6 @@ import argparse
 from datetime import datetime
 from collections import defaultdict
 
-# Critical system and user storage paths that MUST NEVER BE TOUCHED
 HARD_PROTECTED_PATHS = {
     os.path.expanduser('~/Documents'),
     os.path.expanduser('~/Desktop'),
@@ -148,7 +146,6 @@ def is_path_safe(path):
     for prot in HARD_PROTECTED_PATHS:
         if real_p == prot or real_p.startswith(prot + os.sep):
             return False
-    # Avoid root/system critical dirs
     if real_p in {'/', '/System', '/bin', '/sbin', '/usr', '/var', '/private', '/Library'}:
         return False
     return True
@@ -168,7 +165,7 @@ def scan_leftovers():
             if not is_matched(il, installed_names, installed_bids) and is_path_safe(p):
                 sz = get_dir_size_kb(p)
                 if sz > 10:
-                    leftovers[item].append((p, sz, 'User AppSupport', False))
+                    leftovers[item].append((p, sz, 'User AppSupport', False, 'App configuration & cache. Clean resets app settings if reinstalled.'))
 
     # 2. /Library/Application Support
     sys_as = '/Library/Application Support'
@@ -181,7 +178,7 @@ def scan_leftovers():
             if not is_matched(il, installed_names, installed_bids):
                 sz = get_dir_size_kb(p)
                 if sz > 10:
-                    leftovers[item].append((p, sz, 'System AppSupport', True))
+                    leftovers[item].append((p, sz, 'System AppSupport', True, 'System-wide templates/licenses.'))
 
     # 3. ~/Library/Group Containers
     gc_dir = os.path.expanduser('~/Library/Group Containers')
@@ -195,7 +192,7 @@ def scan_leftovers():
                 if is_path_safe(p):
                     sz = get_dir_size_kb(p)
                     if sz > 50:
-                        leftovers[item].append((p, sz, 'Group Container', False))
+                        leftovers[item].append((p, sz, 'Group Container', False, 'Shared sandbox database or cache.'))
 
     # 4. ~/Library/Containers
     c_dir = os.path.expanduser('~/Library/Containers')
@@ -209,20 +206,45 @@ def scan_leftovers():
                 if is_path_safe(p):
                     sz = get_dir_size_kb(p)
                     if sz > 50:
-                        leftovers[item].append((p, sz, 'Container', False))
+                        leftovers[item].append((p, sz, 'Container', False, 'Application sandbox directory.'))
 
     # 5. Stale Daemons & LaunchAgents
     known_stale = [
-        ('/Library/LaunchDaemons/io.github.clash-verge-rev.clash-verge-rev.service.plist', 'Clash Verge Rev', True),
-        ('/Library/PrivilegedHelperTools/io.github.clash-verge-rev.clash-verge-rev.service.bundle', 'Clash Verge Rev', True),
-        ('/Library/PrivilegedHelperTools/com.macpaw.CleanMyMac-setapp.Agent', 'CleanMyMac', True),
-        ('/Library/PrivilegedHelperTools/com.bjango.istatmenus-setapp.installerhelper', 'iStat Menus', True),
-        (os.path.expanduser('~/Library/LaunchAgents/ai.perplexity.xpc.plist'), 'Perplexity AI', False)
+        ('/Library/LaunchDaemons/io.github.clash-verge-rev.clash-verge-rev.service.plist', 'Clash Verge Rev', True, 'Orphaned daemon service; causes launchd loop errors.'),
+        ('/Library/PrivilegedHelperTools/io.github.clash-verge-rev.clash-verge-rev.service.bundle', 'Clash Verge Rev', True, 'Privileged binary bundle.'),
+        ('/Library/PrivilegedHelperTools/com.macpaw.CleanMyMac-setapp.Agent', 'CleanMyMac', True, 'Privileged background agent.'),
+        ('/Library/PrivilegedHelperTools/com.bjango.istatmenus-setapp.installerhelper', 'iStat Menus', True, 'Unused installer helper.'),
+        (os.path.expanduser('~/Library/LaunchAgents/ai.perplexity.xpc.plist'), 'Perplexity AI', False, 'Dead launch agent; binary missing.')
     ]
-    for lp, app_name, needs_sudo in known_stale:
+    for lp, app_name, needs_sudo, risk_info in known_stale:
         if os.path.exists(lp):
             sz = get_dir_size_kb(lp)
-            leftovers[app_name].append((lp, sz, 'Daemon/LaunchAgent', needs_sudo))
+            leftovers[app_name].append((lp, sz, 'Daemon/LaunchAgent', needs_sudo, risk_info))
+
+    # 6. Orphaned Dotfiles in Home
+    wework_dir = os.path.expanduser('~/.wxwork_local')
+    if os.path.exists(wework_dir) and not any('wework' in a or 'wxwork' in a for a in installed_names):
+        sz = get_dir_size_kb(wework_dir)
+        leftovers['WeWork (企业微信)'].append((
+            wework_dir, sz, 'Home Dotfile', False,
+            'Historical local chat media & cache. Risk: deletes offline chat records if not backed up on phone/cloud.'
+        ))
+
+    puppeteer_dir = os.path.expanduser('~/.omp/puppeteer')
+    if os.path.exists(puppeteer_dir):
+        sz = get_dir_size_kb(puppeteer_dir)
+        leftovers['Puppeteer Browser Bundle (~/.omp)'].append((
+            puppeteer_dir, sz, 'Home Dotfile', False,
+            'Old headless Chromium binary. Safe to delete; re-downloads if tool is re-run.'
+        ))
+
+    py27_dir = os.path.expanduser('~/.pyenv/versions/2.7.18')
+    if os.path.exists(py27_dir):
+        sz = get_dir_size_kb(py27_dir)
+        leftovers['Python 2.7 (pyenv 2.7.18)'].append((
+            py27_dir, sz, 'Deprecated Runtime', False,
+            'Python 2.7 is end-of-life. Safe to remove unless legacy scripts explicitly require it.'
+        ))
 
     return leftovers
 
@@ -255,38 +277,43 @@ def main():
     user_items = []
     sudo_commands = []
 
-    print("=== Orphaned App Leftovers Scan Results ===")
+    print("========================================================")
+    print(" 🔍 Orphaned Application Leftovers & Dotfiles")
+    print("========================================================")
     for app, items in sorted(leftovers.items(), key=lambda x: sum(i[1] for i in x[1]), reverse=True):
         app_total_kb = sum(i[1] for i in items)
         total_kb += app_total_kb
         print(f"\n📦 {app} [{format_size(app_total_kb)}]")
-        for path, sz, cat, needs_sudo in items:
+        for path, sz, cat, needs_sudo, risk in items:
             sudo_str = " (requires sudo)" if needs_sudo else ""
             print(f"  └── [{cat}] {path} ({format_size(sz)}){sudo_str}")
+            print(f"      ℹ️ Impact & Risk: {risk}")
             if needs_sudo:
                 sudo_commands.append(path)
             else:
-                user_items.append((app, path, sz))
+                user_items.append((app, path, sz, risk))
 
-    print(f"\n==========================================")
-    print(f"Total Leftovers Found: {len(leftovers)} apps, {format_size(total_kb)}")
-    print(f"==========================================")
+    print(f"\n========================================================")
+    print(f" Total Identified Remnants: {len(leftovers)} items | Total: {format_size(total_kb)}")
+    print(f"========================================================")
 
     if sudo_commands:
-        print("\n[!] System-level remnants detected. To remove with root permissions:")
+        print("\n[!] Root-level remnants detected. Review paths carefully before running:")
         quoted = " ".join(f'"{p}"' for p in sudo_commands)
-        print(f"sudo rm -rf {quoted}")
+        print(f"    sudo rm -rf {quoted}")
 
-    # If --clean-user not requested, exit safely in preview mode
     if not args.clean_user:
-        print("\n[i] Preview only (read-only mode). No files were touched.")
-        print("    To safely move user leftovers to Trash:  python3 scan-app-leftovers.py --clean-user")
+        print("\n[i] Read-only preview mode. No files were modified.")
+        print("    To safely move user leftovers to ~/.Trash: python3 scan-app-leftovers.py --clean-user")
         return
 
-    # Safety confirmation gate
+    # Safety confirmation gate with explicit risk acknowledgment
     if not args.confirm:
         if sys.stdin.isatty():
-            prompt = "\n⚠️  Confirm moving these orphaned user items to ~/.Trash? [y/N]: "
+            print("\n⚠️  PRE-FLIGHT CONFIRMATION:")
+            print("   • Files will be moved to macOS Trash (~/.Trash/) and can be restored.")
+            print("   • Ensure you have reviewed the Impact & Risk notes above.")
+            prompt = "   Do you confirm moving these orphaned items to Trash? [y/N]: "
             choice = input(prompt).strip().lower()
             if choice not in ('y', 'yes'):
                 print("[-] Aborted by user. No files were modified.")
@@ -299,7 +326,7 @@ def main():
     success_count = 0
     reclaimed_kb = 0
 
-    for app, path, sz in user_items:
+    for app, path, sz, risk in user_items:
         if os.path.exists(path):
             try:
                 if args.permanent:
@@ -315,7 +342,7 @@ def main():
                 print(f"  [!] Failed to remove {path}: {e}")
 
     method_str = "permanently deleted" if args.permanent else "moved to macOS Trash (~/.Trash/)"
-    print(f"[✓] Completed! {success_count} items {method_str}. Reclaimed ~{format_size(reclaimed_kb)}.")
+    print(f"[✓] Cleanup complete! {success_count} items {method_str}. Reclaimed ~{format_size(reclaimed_kb)}.")
     if not args.permanent:
         print("    (You can restore any item from macOS Trash if needed)")
 

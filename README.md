@@ -1,6 +1,6 @@
 # mac-deep-clean-skill 🧹
 
-> Safe, transparent, and reproducible macOS deep storage analysis, developer cache reclamation, and orphaned application leftover cleanup.
+> Safe, transparent, and reproducible macOS deep storage analysis, developer cache reclamation, orphaned application leftover cleanup, and system latency tuning.
 
 Works both as an **AI Agent Skill** (Pi, Codex, Claude Code, Cursor) and as a **standalone CLI toolkit** on any Mac.
 
@@ -8,16 +8,22 @@ Works both as an **AI Agent Skill** (Pi, Codex, Claude Code, Cursor) and as a **
 
 ## ✨ Features
 
-- **🛡️ 4-Layer Safety Architecture**:
+- **🛡️ Mandatory Risk Disclosure & 4-Layer Safety**:
+  - **Explicit Impact & Risk Disclosure**: Always presents an itemized preview detailing what data is removed, whether settings reset, and potential impacts before requesting confirmation.
   - **Zero Silent Deletion**: All scripts run in read-only preview/dry-run mode by default.
   - **Interactive Confirmation Gate**: Destructive tasks require explicit terminal `[y/N]` prompt or `--confirm` flag.
   - **Safe Trash Policy**: Orphaned application files are moved to macOS Trash (`~/.Trash/`) rather than permanently deleted with `rm -rf`, enabling one-click "Put Back" restoration.
   - **Hard-Coded Protected Whitelist**: Immunizes user personal directories (`Documents`, `Desktop`, `Pictures`, `Movies`), CloudStorage, system roots (`/System`, `/usr`), and system credentials (`Keychains`).
 - **⚡ Developer & Webview Cache Reclamation**:
   - Safely recovers 15GB~30GB+ of rebuildable caches: `npm` / `npx`, `Gradle`, `uv`, `pip`, `Homebrew` bottles, `Go` build cache, `Codex` sandbox runtimes, and Electron `CacheStorage`.
-- **🔍 Orphaned App Leftover Scanner**:
+- **🔍 Orphaned App & Dotfile Leftover Scanner**:
   - Cross-references all registered `.app` bundles across `/Applications`, `/System/Applications`, `~/Applications`, and `CoreServices`.
   - Discovers forgotten containers, group containers, preferences, and lingering `LaunchDaemons` / `PrivilegedHelperTools` from apps deleted long ago.
+  - Detects dead dotfile data left in `$HOME` (e.g. `~/.wxwork_local` chat data when WeWork is uninstalled, `~/.omp/puppeteer` binaries, obsolete Python 2.7 runtimes).
+- **🚀 System Latency & Index Optimization**:
+  - **Spotlight Bloat Check**: Detects when `CoreSpotlight` journals balloon (>2GB) and provides one-line rebuild guidance.
+  - **Cloud Storage Eviction Advisor**: Surfaces large files (>100MB) consuming local SSD space in OneDrive/iCloud so they can be evicted to cloud-only.
+  - **Input Latency Inspection**: Analyzes login items hooking into Accessibility `CGEventTap` to help eliminate mouse/keyboard micro-delays.
 - **📦 Zero External Dependencies**:
   - Pure Python 3 and Bash using macOS built-in tools. Optionally integrates with [Mole (`mo`)](https://mole.fit) if installed.
 
@@ -27,13 +33,14 @@ Works both as an **AI Agent Skill** (Pi, Codex, Claude Code, Cursor) and as a **
 
 ```text
 mac-deep-clean-skill/
-├── SKILL.md                          # AI Agent skill definition & execution protocol
+├── SKILL.md                          # AI Agent skill definition, safety protocol & rules
 ├── README.md                         # Documentation
+├── LICENSE                           # MIT License
 ├── .gitignore
 └── scripts/
-    ├── analyze-disk.sh               # Quick storage & cache size inspector (Read-only)
+    ├── analyze-disk.sh               # Storage, caches, Spotlight, cloud & startup inspector (Read-only)
     ├── clean-dev-caches.sh           # Developer cache reclaimer (Dry-run & confirmation guarded)
-    └── scan-app-leftovers.py         # Orphaned app leftover scanner & safe trash cleaner
+    └── scan-app-leftovers.py         # Orphaned app & dotfile leftover scanner & safe trash cleaner
 ```
 
 ---
@@ -49,7 +56,7 @@ git clone https://github.com/qydxyx/mac-deep-clean-skill.git
 cd mac-deep-clean-skill
 ```
 
-#### 1. Analyze Storage & Caches
+#### 1. Analyze Storage, Spotlight & Startup Latency
 ```bash
 bash scripts/analyze-disk.sh
 ```
@@ -66,12 +73,12 @@ bash scripts/clean-dev-caches.sh
 bash scripts/clean-dev-caches.sh --confirm
 ```
 
-#### 3. Scan & Clean Orphaned App Leftovers
+#### 3. Scan & Clean Orphaned App & Dotfile Leftovers
 ```bash
-# Scan system and output a categorized tree (read-only):
+# Scan system, assess risks, and output a categorized tree (read-only):
 python3 scripts/scan-app-leftovers.py
 
-# Safely move orphaned files to macOS Trash (prompts [y/N]):
+# Safely move orphaned files to macOS Trash (prompts [y/N] after risk disclosure):
 python3 scripts/scan-app-leftovers.py --clean-user
 
 # Clean with explicit confirmation:
@@ -97,8 +104,9 @@ ln -s ~/.agents/skills/mac-deep-clean-skill ~/.pi/agent/skills/mac-deep-clean-sk
 ```
 
 Trigger prompts you can use with your agent:
-- *"Free up disk space on my Mac and show me a tree list of cleanable files first."*
+- *"Free up disk space on my Mac and show me a tree list with risks before cleaning."*
 - *"Scan for leftover files from uninstalled applications."*
+- *"Check why my Mac is running slow and inspect startup items."*
 - *"Clean my developer caches (npm, gradle, brew, python)."*
 
 ---
