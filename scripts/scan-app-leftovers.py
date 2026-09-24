@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
 scan-app-leftovers.py - Orphaned Application Leftover Scanner & Safe Cleaner for macOS
-Detects directories and files left behind by uninstalled applications across:
+Detects directories, files, and hidden nested .app bundles left behind by uninstalled applications across:
 - ~/Library/Application Support & /Library/Application Support
 - ~/Library/Containers & ~/Library/Group Containers
 - ~/Library/Saved Application State
 - ~/Library/LaunchAgents & /Library/LaunchDaemons
 - /Library/PrivilegedHelperTools
+- Hidden nested .app helpers & updaters (e.g. Logitech, Curse/Twitch, EdgeUpdater, Karabiner)
 - Orphaned home dotfiles (~/.wxwork_local, ~/.omp/puppeteer, obsolete pyenv runtimes)
 
 Safety Protocol:
@@ -66,6 +67,12 @@ PROTECTED_PREFIXES = [
     'ubf8t346g9.onedrivestandalonesuite',
     'com.microsoft.rdc',
     'com.paragon-software'
+]
+
+SAFE_NESTED_APP_ROOTS = [
+    '/library/application support/script editor',
+    '/library/application support/apple',
+    os.path.expanduser('~/library/cloudstorage')
 ]
 
 def get_installed_apps():
@@ -139,6 +146,12 @@ def is_matched(name, installed_names, installed_bids):
     for bid in installed_bids:
         if bid in name_lower or name_lower in bid:
             return True
+        # Check reverse vendor prefix
+        parts = bid.split('.')
+        if len(parts) >= 2:
+            prefix = '.'.join(parts[:2])
+            if name_lower.startswith(prefix) or prefix in name_lower:
+                return True
     return False
 
 def is_path_safe(path):
@@ -149,6 +162,23 @@ def is_path_safe(path):
     if real_p in {'/', '/System', '/bin', '/sbin', '/usr', '/var', '/private', '/Library'}:
         return False
     return True
+
+def check_binary_arch(app_path):
+    macos_dir = os.path.join(app_path, 'Contents', 'MacOS')
+    if os.path.exists(macos_dir):
+        for f in os.listdir(macos_dir):
+            bin_path = os.path.join(macos_dir, f)
+            if os.path.isfile(bin_path) and not os.path.islink(bin_path):
+                try:
+                    res = subprocess.run(['file', bin_path], capture_output=True, text=True, timeout=2)
+                    out = res.stdout.lower()
+                    if 'x86_64' in out and 'arm64' not in out:
+                        return 'Legacy Intel x86_64 only (Triggers Rosetta retirement alert)'
+                    elif 'arm64' in out:
+                        return 'Universal / Apple Silicon'
+                except:
+                    pass
+    return 'Universal / Unknown'
 
 def scan_leftovers():
     installed_names, installed_bids = get_installed_apps()
@@ -246,6 +276,65 @@ def scan_leftovers():
             'Python 2.7 is end-of-life. Safe to remove unless legacy scripts explicitly require it.'
         ))
 
+    # 7. Deep Nested Helper & Updater .app Bundles
+    # Discovers second-tier executables left by uninstalled apps (Logitech, Curse/Twitch, EdgeUpdater, Karabiner)
+    nested_search_dirs = [
+        ('/Library/Application Support', True),
+        (os.path.expanduser('~/Library/Application Support'), False),
+        (os.path.expanduser('~/Library'), False)
+    ]
+    already_tracked = {item[0] for sublist in leftovers.values() for item in sublist}
+
+    for base_dir, is_sys in nested_search_dirs:
+        if not os.path.exists(base_dir):
+            continue
+        for root, dirs, files in os.walk(base_dir):
+            for d in dirs[:]:
+                if d.endswith('.app'):
+                    full_p = os.path.join(root, d)
+                    dirs.remove(d) # do not descend inside bundle
+                    fp_lower = full_p.lower()
+                    if any(fp_lower.startswith(sp) for sp in SAFE_NESTED_APP_ROOTS):
+                        continue
+                    if full_p in already_tracked:
+                        continue
+
+                    app_clean_name = d[:-4].lower()
+                    matched = any(ma in app_clean_name or app_clean_name in ma for ma in installed_names)
+                    if not matched:
+                        # Check bundle id & vendor prefix
+                        plist_f = os.path.join(full_p, 'Contents', 'Info.plist')
+                        if os.path.exists(plist_f):
+                            try:
+                                with open(plist_f, 'rb') as fp:
+                                    pl = plistlib.load(fp)
+                                    bid = str(pl.get('CFBundleIdentifier', '')).lower()
+                                    if any(b in bid or bid in b for b in installed_bids):
+                                        matched = True
+                                    parts = bid.split('.')
+                                    if len(parts) >= 2:
+                                        vendor_pfx = '.'.join(parts[:2])
+                                        if any(b.startswith(vendor_pfx) for b in installed_bids):
+                                            matched = True
+                            except:
+                                pass
+                    # Check parent folder name
+                    if not matched:
+                        parent_name = os.path.basename(root).lower()
+                        grandparent = os.path.basename(os.path.dirname(root)).lower()
+                        if any(ma in parent_name or ma in grandparent for ma in installed_names):
+                            matched = True
+
+                    if not matched:
+                        sz = get_dir_size_kb(full_p)
+                        if sz > 20:
+                            arch_info = check_binary_arch(full_p)
+                            leftovers[f"Nested Helper: {d[:-4]}"].append((
+                                full_p, sz, 'Nested Helper .app', is_sys,
+                                f"Arch: {arch_info}. Orphaned helper bundle from uninstalled software."
+                            ))
+                            already_tracked.add(full_p)
+
     return leftovers
 
 def safe_move_to_trash(target_path):
@@ -278,7 +367,7 @@ def main():
     sudo_commands = []
 
     print("========================================================")
-    print(" 🔍 Orphaned Application Leftovers & Dotfiles")
+    print(" 🔍 Orphaned Application Leftovers & Nested Helpers")
     print("========================================================")
     for app, items in sorted(leftovers.items(), key=lambda x: sum(i[1] for i in x[1]), reverse=True):
         app_total_kb = sum(i[1] for i in items)
