@@ -1,5 +1,5 @@
 ---
-name: mac-deep-clean
+name: mac-deep-clean-skill
 description: >
   Deep disk space analysis, developer cache reclamation (npm, Gradle, uv, pip,
   Homebrew, Go, Codex runtimes), and orphaned application leftover detection &
@@ -44,7 +44,7 @@ To guarantee zero accidental data loss or system instability, this skill adheres
 ## Capabilities & Architecture
 
 ```text
-mac-deep-clean/
+mac-deep-clean-skill/
 ├── SKILL.md                          # Workflow rules, safety policies & triage
 └── scripts/
     ├── analyze-disk.sh               # Native disk storage & cache inspector (Read-only)

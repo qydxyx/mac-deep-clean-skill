@@ -1,4 +1,4 @@
-# mac-deep-clean 🧹
+# mac-deep-clean-skill 🧹
 
 > Safe, transparent, and reproducible macOS deep storage analysis, developer cache reclamation, and orphaned application leftover cleanup.
 
@@ -26,7 +26,7 @@ Works both as an **AI Agent Skill** (Pi, Codex, Claude Code, Cursor) and as a **
 ## 📁 Repository Structure
 
 ```text
-mac-deep-clean/
+mac-deep-clean-skill/
 ├── SKILL.md                          # AI Agent skill definition & execution protocol
 ├── README.md                         # Documentation
 ├── .gitignore
@@ -45,8 +45,8 @@ mac-deep-clean/
 Clone the repository and run scripts directly:
 
 ```bash
-git clone https://github.com/qydxyx/mac-deep-clean.git
-cd mac-deep-clean
+git clone https://github.com/qydxyx/mac-deep-clean-skill.git
+cd mac-deep-clean-skill
 ```
 
 #### 1. Analyze Storage & Caches
@@ -89,11 +89,11 @@ Install into your local or global agent skills directory:
 ```bash
 # Install to global skills directory:
 mkdir -p ~/.agents/skills
-cp -R mac-deep-clean ~/.agents/skills/
+cp -R mac-deep-clean-skill ~/.agents/skills/
 
 # Or link for Pi coding agent:
 mkdir -p ~/.pi/agent/skills
-ln -s ~/.agents/skills/mac-deep-clean ~/.pi/agent/skills/mac-deep-clean
+ln -s ~/.agents/skills/mac-deep-clean-skill ~/.pi/agent/skills/mac-deep-clean-skill
 ```
 
 Trigger prompts you can use with your agent:
