@@ -9,6 +9,8 @@ Detects directories, files, and hidden nested .app bundles left behind by uninst
 - /Library/PrivilegedHelperTools
 - Hidden nested .app helpers & updaters (e.g. Logitech, Curse/Twitch, EdgeUpdater, Karabiner)
 - Orphaned home dotfiles (~/.wxwork_local, ~/.omp/puppeteer, obsolete pyenv runtimes)
+- /private/var/folders orphaned update staging & zombie mounted DMGs (e.g. Zed, Sparkle clones)
+- Kernel & DriverKit ghost extensions (systemextensionsctl integration)
 
 Safety Protocol:
 - Default action is ALWAYS read-only scanning (dry-run).
@@ -25,6 +27,7 @@ import shutil
 import plistlib
 import subprocess
 import argparse
+import re
 from datetime import datetime
 from collections import defaultdict
 
@@ -146,7 +149,6 @@ def is_matched(name, installed_names, installed_bids):
     for bid in installed_bids:
         if bid in name_lower or name_lower in bid:
             return True
-        # Check reverse vendor prefix
         parts = bid.split('.')
         if len(parts) >= 2:
             prefix = '.'.join(parts[:2])
@@ -179,6 +181,29 @@ def check_binary_arch(app_path):
                 except:
                     pass
     return 'Universal / Unknown'
+
+def get_mounted_var_folders():
+    try:
+        res = subprocess.run(['mount'], capture_output=True, text=True)
+        mounts = []
+        for line in res.stdout.splitlines():
+            if '/var/folders' in line or '/private/var/folders' in line:
+                m = re.search(r'on (/private/var/folders/[^\s]+|\/var\/folders\/[^\s]+)\s+\(', line)
+                if m:
+                    mounts.append(m.group(1))
+        return mounts
+    except Exception:
+        return []
+
+def safe_eject_and_remove(target_path):
+    mounted_points = get_mounted_var_folders()
+    for mp in mounted_points:
+        if mp == target_path or mp.startswith(target_path + os.sep):
+            subprocess.run(['diskutil', 'eject', 'force', mp], capture_output=True, text=True)
+    if os.path.isdir(target_path) and not os.path.islink(target_path):
+        shutil.rmtree(target_path)
+    elif os.path.exists(target_path):
+        os.remove(target_path)
 
 def scan_leftovers():
     installed_names, installed_bids = get_installed_apps()
@@ -277,7 +302,6 @@ def scan_leftovers():
         ))
 
     # 7. Deep Nested Helper & Updater .app Bundles
-    # Discovers second-tier executables left by uninstalled apps (Logitech, Curse/Twitch, EdgeUpdater, Karabiner)
     nested_search_dirs = [
         ('/Library/Application Support', True),
         (os.path.expanduser('~/Library/Application Support'), False),
@@ -292,7 +316,7 @@ def scan_leftovers():
             for d in dirs[:]:
                 if d.endswith('.app'):
                     full_p = os.path.join(root, d)
-                    dirs.remove(d) # do not descend inside bundle
+                    dirs.remove(d)
                     fp_lower = full_p.lower()
                     if any(fp_lower.startswith(sp) for sp in SAFE_NESTED_APP_ROOTS):
                         continue
@@ -302,7 +326,6 @@ def scan_leftovers():
                     app_clean_name = d[:-4].lower()
                     matched = any(ma in app_clean_name or app_clean_name in ma for ma in installed_names)
                     if not matched:
-                        # Check bundle id & vendor prefix
                         plist_f = os.path.join(full_p, 'Contents', 'Info.plist')
                         if os.path.exists(plist_f):
                             try:
@@ -318,7 +341,6 @@ def scan_leftovers():
                                             matched = True
                             except:
                                 pass
-                    # Check parent folder name
                     if not matched:
                         parent_name = os.path.basename(root).lower()
                         grandparent = os.path.basename(os.path.dirname(root)).lower()
@@ -335,7 +357,41 @@ def scan_leftovers():
                             ))
                             already_tracked.add(full_p)
 
+    # 8. /private/var/folders Update Staging & Stale Mounts
+    try:
+        var_subdirs = glob.glob('/private/var/folders/*/*/*')
+        mounted_dirs = get_mounted_var_folders()
+        for vsd in var_subdirs:
+            base_b = os.path.basename(vsd)
+            # Match common update staging patterns
+            if '.code_sign_clone' in base_b or '-auto-update' in base_b or base_b.startswith('MSau_'):
+                sz = get_dir_size_kb(vsd)
+                if sz > 1024 or vsd in mounted_dirs:
+                    is_mounted_note = " (Mounted disk image will be safely ejected before deletion)" if vsd in mounted_dirs else ""
+                    leftovers[f"Update Staging Cache: {base_b}"].append((
+                        vsd, sz, 'var/folders Staging', False,
+                        f"Temporary auto-update staging sandbox.{is_mounted_note} Zero risk to running apps."
+                    ))
+    except Exception:
+        pass
+
     return leftovers
+
+def scan_ghost_system_extensions(installed_bids):
+    try:
+        res = subprocess.run(['systemextensionsctl', 'list'], capture_output=True, text=True)
+        ghost_extensions = []
+        for line in res.stdout.splitlines():
+            m = re.search(r'([A-Z0-9]{10})\s+([a-zA-Z0-9\.\-]+)\s+\([^)]+\)\s+([^\t\[]+)\s*(\[[^\]]+\])', line)
+            if m:
+                team_id, bundle_id, name, state = m.groups()
+                bid_lower = bundle_id.lower()
+                matched = any(b in bid_lower or bid_lower.startswith('.'.join(b.split('.')[:2])) for b in installed_bids)
+                if not matched:
+                    ghost_extensions.append((team_id, bundle_id, name.strip(), state))
+        return ghost_extensions
+    except Exception:
+        return []
 
 def safe_move_to_trash(target_path):
     trash_dir = os.path.expanduser('~/.Trash')
@@ -353,18 +409,22 @@ def main():
         description="Safe scanner & cleaner for orphaned application leftovers on macOS."
     )
     parser.add_argument("--clean-user", action="store_true", help="Remove user-space leftovers (moves to ~/.Trash).")
+    parser.add_argument("--clean-system", action="store_true", help="Remove system-level remnants (requires root/sudo).")
     parser.add_argument("-y", "--confirm", action="store_true", help="Confirm execution without interactive prompt.")
     parser.add_argument("--permanent", action="store_true", help="Bypass ~/.Trash and delete permanently via rm -rf.")
     args = parser.parse_args()
 
+    installed_names, installed_bids = get_installed_apps()
     leftovers = scan_leftovers()
-    if not leftovers:
-        print("[✓] No orphaned application leftovers detected. Clean system!")
+    ghost_exts = scan_ghost_system_extensions(installed_bids)
+
+    if not leftovers and not ghost_exts:
+        print("[✓] No orphaned application leftovers or ghost extensions detected. Clean system!")
         return
 
     total_kb = 0
     user_items = []
-    sudo_commands = []
+    system_items = []
 
     print("========================================================")
     print(" 🔍 Orphaned Application Leftovers & Nested Helpers")
@@ -378,7 +438,7 @@ def main():
             print(f"  └── [{cat}] {path} ({format_size(sz)}){sudo_str}")
             print(f"      ℹ️ Impact & Risk: {risk}")
             if needs_sudo:
-                sudo_commands.append(path)
+                system_items.append((app, path, sz, risk))
             else:
                 user_items.append((app, path, sz, risk))
 
@@ -386,24 +446,37 @@ def main():
     print(f" Total Identified Remnants: {len(leftovers)} items | Total: {format_size(total_kb)}")
     print(f"========================================================")
 
-    if sudo_commands:
-        print("\n[!] Root-level remnants detected. Review paths carefully before running:")
-        quoted = " ".join(f'"{p}"' for p in sudo_commands)
-        print(f"    sudo rm -rf {quoted}")
-        print("    sudo systemextensionsctl gc  # Garbage-collect orphaned system/driver extensions")
+    if ghost_exts:
+        print("\n========================================================")
+        print(" ⚠️  Ghost System Extensions & DriverKit Filters")
+        print("========================================================")
+        for tid, bid, name, state in ghost_exts:
+            print(f"  • [{name}] {bid} (Team: {tid}) -> {state}")
+            print(f"    Impact: App uninstalled but kernel filter is registered. Unload via System Settings -> Login Items & Extensions.")
 
-    if not args.clean_user:
+    if system_items:
+        print("\n[!] Root-level remnants detected. To remove with root permissions:")
+        quoted = " ".join(f'"{p}"' for _, p, _, _ in system_items)
+        print(f"    sudo rm -rf {quoted}")
+
+    # Exit safely in preview mode if no action requested
+    if not args.clean_user and not args.clean_system:
         print("\n[i] Read-only preview mode. No files were modified.")
         print("    To safely move user leftovers to ~/.Trash: python3 scan-app-leftovers.py --clean-user")
+        if system_items:
+            print("    To clean system-level leftovers (with sudo):  sudo python3 scan-app-leftovers.py --clean-system")
         return
 
     # Safety confirmation gate with explicit risk acknowledgment
     if not args.confirm:
         if sys.stdin.isatty():
             print("\n⚠️  PRE-FLIGHT CONFIRMATION:")
-            print("   • Files will be moved to macOS Trash (~/.Trash/) and can be restored.")
+            if args.clean_user:
+                print("   • User files will be moved to macOS Trash (~/.Trash/) and can be restored.")
+            if args.clean_system:
+                print("   • System-level files will be permanently deleted.")
             print("   • Ensure you have reviewed the Impact & Risk notes above.")
-            prompt = "   Do you confirm moving these orphaned items to Trash? [y/N]: "
+            prompt = "   Do you confirm executing the cleanup? [y/N]: "
             choice = input(prompt).strip().lower()
             if choice not in ('y', 'yes'):
                 print("[-] Aborted by user. No files were modified.")
@@ -412,29 +485,39 @@ def main():
             print("\n[-] Error: Non-interactive session requires explicit -y or --confirm flag.")
             sys.exit(1)
 
-    print("\n[-] Processing user-space leftovers...")
-    success_count = 0
-    reclaimed_kb = 0
-
-    for app, path, sz, risk in user_items:
-        if os.path.exists(path):
-            try:
-                if args.permanent:
-                    if os.path.isdir(path) and not os.path.islink(path):
-                        shutil.rmtree(path)
+    if args.clean_user and user_items:
+        print("\n[-] Processing user-space leftovers...")
+        u_success = 0
+        u_kb = 0
+        for app, path, sz, risk in user_items:
+            if os.path.exists(path):
+                try:
+                    if '/var/folders/' in path or args.permanent:
+                        safe_eject_and_remove(path)
                     else:
-                        os.remove(path)
-                else:
-                    safe_move_to_trash(path)
-                success_count += 1
-                reclaimed_kb += sz
-            except Exception as e:
-                print(f"  [!] Failed to remove {path}: {e}")
+                        safe_move_to_trash(path)
+                    u_success += 1
+                    u_kb += sz
+                except Exception as e:
+                    print(f"  [!] Failed to remove {path}: {e}")
+        print(f"[✓] User cleanup complete! {u_success} items processed. Reclaimed ~{format_size(u_kb)}.")
 
-    method_str = "permanently deleted" if args.permanent else "moved to macOS Trash (~/.Trash/)"
-    print(f"[✓] Cleanup complete! {success_count} items {method_str}. Reclaimed ~{format_size(reclaimed_kb)}.")
-    if not args.permanent:
-        print("    (You can restore any item from macOS Trash if needed)")
+    if args.clean_system and system_items:
+        if os.geteuid() != 0:
+            print("\n[-] Error: --clean-system requires root permissions. Please re-run with sudo.")
+            sys.exit(1)
+        print("\n[-] Processing system-level remnants with root privileges...")
+        s_success = 0
+        s_kb = 0
+        for app, path, sz, risk in system_items:
+            if os.path.exists(path):
+                try:
+                    safe_eject_and_remove(path)
+                    s_success += 1
+                    s_kb += sz
+                except Exception as e:
+                    print(f"  [!] Failed to remove {path}: {e}")
+        print(f"[✓] System cleanup complete! {s_success} root-level items removed. Reclaimed ~{format_size(s_kb)}.")
 
 if __name__ == '__main__':
     main()

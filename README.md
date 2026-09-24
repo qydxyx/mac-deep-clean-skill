@@ -81,8 +81,11 @@ python3 scripts/scan-app-leftovers.py
 # Safely move orphaned files to macOS Trash (prompts [y/N] after risk disclosure):
 python3 scripts/scan-app-leftovers.py --clean-user
 
-# Clean with explicit confirmation:
+# Clean user leftovers with explicit confirmation:
 python3 scripts/scan-app-leftovers.py --clean-user --confirm
+
+# Clean system-level leftovers & unmount dead var/folder DMGs (requires sudo):
+sudo python3 scripts/scan-app-leftovers.py --clean-system --confirm
 ```
 
 > **Note for System Daemons**: If leftover `LaunchDaemons` or `PrivilegedHelperTools` are discovered under `/Library`, `scan-app-leftovers.py` outputs the exact `sudo rm -rf ...` line for you to review and run manually.

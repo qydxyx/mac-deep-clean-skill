@@ -100,6 +100,9 @@ Scans for remnants left behind when apps were deleted by dragging to Trash, plus
 - `~/Library/Saved Application State/`
 - `~/Library/LaunchAgents/` & `/Library/LaunchDaemons/`
 - `/Library/PrivilegedHelperTools/`
+- Hidden nested `.app` bundles (updaters, helper daemons)
+- `/private/var/folders/` orphaned update staging & zombie mounted DMGs
+- Kernel & DriverKit ghost extensions (`systemextensionsctl`)
 - Orphaned dotfiles: `~/.wxwork_local` (WeWork chat data), `~/.omp/puppeteer`, `~/.pyenv/versions/2.7*`
 
 ### Execution Steps
@@ -115,6 +118,12 @@ Scans for remnants left behind when apps were deleted by dragging to Trash, plus
 
    # With pre-approved confirmation:
    python3 "<skill-dir>/scripts/scan-app-leftovers.py" --clean-user --confirm
+   ```
+
+3. **Clean system-level remnants (Root Mode with Sudo)**:
+   ```bash
+   # Cleans confirmed root /Library leftovers and unmounts zombie var/folder DMGs:
+   sudo python3 "<skill-dir>/scripts/scan-app-leftovers.py" --clean-system --confirm
    ```
 
 3. **System-level remnants (Daemons & Helper Tools)**:
