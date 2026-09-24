@@ -390,6 +390,7 @@ def main():
         print("\n[!] Root-level remnants detected. Review paths carefully before running:")
         quoted = " ".join(f'"{p}"' for p in sudo_commands)
         print(f"    sudo rm -rf {quoted}")
+        print("    sudo systemextensionsctl gc  # Garbage-collect orphaned system/driver extensions")
 
     if not args.clean_user:
         print("\n[i] Read-only preview mode. No files were modified.")
